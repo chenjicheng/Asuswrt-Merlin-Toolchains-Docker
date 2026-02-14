@@ -105,6 +105,44 @@ jobs:
           TAG="${{ needs.check-tag.outputs.tag }}"
           git clone --depth 1 --branch "${TAG}" https://github.com/RMerl/asuswrt-merlin.ng.git ~/asuswrt-merlin.ng
 
+      - name: Download and install iptables 1.8.10 source
+        run: |
+          cd ~/asuswrt-merlin.ng/release/src/router
+
+          # Download iptables 1.8.10 source if the directory does not already exist
+          if [ ! -d "iptables-1.8.10" ]; then
+            echo "Downloading iptables-1.8.10 source..."
+            curl -fSL "https://www.netfilter.org/projects/iptables/files/iptables-1.8.10.tar.xz" -o /tmp/iptables-1.8.10.tar.xz
+            tar xf /tmp/iptables-1.8.10.tar.xz -C .
+            rm -f /tmp/iptables-1.8.10.tar.xz
+            echo "iptables-1.8.10 source installed successfully"
+          else
+            echo "iptables-1.8.10 directory already exists"
+          fi
+
+          ls -la iptables-1.8.10/
+
+      - name: Enable iptables 1.8.10 for RT-BE86U build
+        run: |
+          cd ~/asuswrt-merlin.ng/release/src-rt
+
+          # Add IPTABLES1810=y to the RT-BE86U target definition in target.mak
+          # We append it to the last line of the RT-BE86U definition (the one with VPN_FUSION_MERLIN=y and no trailing \)
+          if [ -f target.mak ]; then
+            # Find the last line of the RT-BE86U block (line with VPN_FUSION_MERLIN=y after RT-BE86U definition)
+            # Use awk to locate and modify the correct block
+            awk '
+              /^export RT-BE86U \+= BUILD_NAME="RT-BE86U"/ { in_block=1 }
+              in_block && /VPN_FUSION_MERLIN=y$/ {
+                sub(/VPN_FUSION_MERLIN=y$/, "VPN_FUSION_MERLIN=y IPTABLES1810=y")
+                in_block=0
+              }
+              { print }
+            ' target.mak > target.mak.tmp && mv target.mak.tmp target.mak
+            echo "Added IPTABLES1810=y to RT-BE86U target in target.mak"
+            grep 'IPTABLES1810' target.mak || true
+          fi
+
       - name: Apply xt_owner kernel config patch
         run: |
           cd ~/asuswrt-merlin.ng
@@ -139,53 +177,7 @@ jobs:
               if ! grep -q "CONFIG_NETFILTER_XT_MATCH_OWNER" "$cfg"; then
                 echo "CONFIG_NETFILTER_XT_MATCH_OWNER=m" >> "$cfg"
                 echo "Added CONFIG_NETFILTER_XT_MATCH_OWNER=m to $cfg"
-              else
-                sed -i 's/.*CONFIG_NETFILTER_XT_MATCH_OWNER.*/CONFIG_NETFILTER_XT_MATCH_OWNER=m/' "$cfg"
-                echo "Patched CONFIG_NETFILTER_XT_MATCH_OWNER in $cfg"
               fi
-            fi
-          done
-
-      - name: Apply iptables xt_owner extension patch
-        run: |
-          cd ~/asuswrt-merlin.ng
-
-          # Enable owner match extension in iptables build
-          IPTABLES_DIRS=$(find . -type d -name "iptables*" -path "*/router/*" 2>/dev/null)
-          for ipt_dir in $IPTABLES_DIRS; do
-            # Ensure libxt_owner is not excluded from the disabled extensions list
-            DISABLED_FILE="$ipt_dir/extensions/.owner-test"
-            if [ -f "$DISABLED_FILE" ]; then
-              rm -f "$DISABLED_FILE"
-              echo "Removed owner disable flag: $DISABLED_FILE"
-            fi
-
-            # Check for Makefile.am or configure.ac to ensure owner extension is built
-            for makefile in "$ipt_dir/extensions/GNUmakefile.in" "$ipt_dir/extensions/Makefile.am" "$ipt_dir/extensions/Makefile"; do
-              if [ -f "$makefile" ]; then
-                if ! grep -q "libxt_owner" "$makefile"; then
-                  # Add libxt_owner to the build list if a pattern for similar modules exists
-                  if grep -q "libxt_" "$makefile"; then
-                    sed -i '/libxt_mark/a libxt_owner' "$makefile" 2>/dev/null || true
-                    echo "Added libxt_owner to $makefile"
-                  fi
-                else
-                  echo "libxt_owner already referenced in $makefile"
-                fi
-              fi
-            done
-
-            # Verify libxt_owner.c source file exists
-            if [ -d "$ipt_dir/extensions" ] && [ -f "$ipt_dir/extensions/libxt_owner.c" ]; then
-              echo "libxt_owner.c source confirmed in $ipt_dir/extensions/"
-            fi
-          done
-
-          # Ensure xt_owner is not blocked in any iptables config
-          find . \( -path "*/iptables*/configure*" -o -path "*/iptables*/Makefile*" \) -type f | while read cf; do
-            if grep -q "owner" "$cf" && grep -q "disable.*owner\|without.*owner" "$cf"; then
-              sed -i 's/disable.*owner//' "$cf"
-              echo "Removed owner disable in $cf"
             fi
           done
 
@@ -239,8 +231,9 @@ jobs:
             RT-BE86U firmware built from asuswrt-merlin.ng tag `${{ needs.check-tag.outputs.tag }}`.
 
             **Patches applied:**
+            - Upgraded iptables from 1.4.x to 1.8.10 for improved compatibility and features
             - Enabled `CONFIG_NETFILTER_XT_MATCH_OWNER=m` (xt_owner kernel module)
-            - Updated iptables with owner match extension support
+            - iptables 1.8.10 includes built-in owner match extension support
           files: firmware/*
           draft: false
           prerelease: ${{ contains(needs.check-tag.outputs.tag, 'beta') }}
