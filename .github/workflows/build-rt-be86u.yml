@@ -121,7 +121,8 @@ jobs:
 
       - name: Build RT-BE86U firmware
         run: |
-          cd ~/asuswrt-merlin.ng/release/src-rt
+          set -o pipefail
+          cd ~/asuswrt-merlin.ng/release/src-rt-5.04behnd.4916
           make rt-be86u 2>&1 | tee ~/build.log
 
       - name: Collect firmware artifacts
@@ -129,9 +130,9 @@ jobs:
         run: |
           TAG="${{ needs.check-tag.outputs.tag }}"
           mkdir -p ~/firmware
-          find ~/asuswrt-merlin.ng/release/src-rt/image -type f \( -name "*.trx" -o -name "*.w" -o -name "*.pkgtb" \) \
+          find ~/asuswrt-merlin.ng/release/src-rt-5.04behnd.4916/image -type f \( -name "*.trx" -o -name "*.w" -o -name "*.pkgtb" \) \
             -exec cp {} ~/firmware/ \; 2>/dev/null || true
-          find ~/asuswrt-merlin.ng/release/src-rt -maxdepth 3 -type f -name "*BE86U*" \
+          find ~/asuswrt-merlin.ng/release/src-rt-5.04behnd.4916 -maxdepth 3 -type f -name "*BE86U*" \
             -exec cp {} ~/firmware/ \; 2>/dev/null || true
           ls -la ~/firmware/
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
