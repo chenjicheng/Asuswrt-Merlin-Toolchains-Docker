@@ -135,12 +135,13 @@ jobs:
             -exec cp {} ~/firmware/ \; 2>/dev/null || true
           ls -la ~/firmware/
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "firmware_path=$(realpath ~/firmware)" >> "$GITHUB_OUTPUT"
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
           name: RT-BE86U-firmware-${{ needs.check-tag.outputs.tag }}
-          path: ~/firmware/
+          path: ${{ steps.collect.outputs.firmware_path }}
           retention-days: 30
 
   release:
