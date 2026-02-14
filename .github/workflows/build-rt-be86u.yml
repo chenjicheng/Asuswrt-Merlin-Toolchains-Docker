@@ -1,0 +1,210 @@
+name: Build RT-BE86U Firmware
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (e.g. 3006.102.6). Leave empty to auto-detect latest 3006* tag.'
+        required: false
+        default: ''
+
+jobs:
+  check-tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      should_build: ${{ steps.resolve.outputs.should_build }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve tag
+        id: resolve
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+            echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "Using manually specified tag: ${TAG}"
+            exit 0
+          fi
+
+          LATEST_TAG=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/RMerl/asuswrt-merlin.ng/tags?per_page=100" \
+            | jq -r '[.[].name | select(startswith("3006"))] | sort_by(split(".") | map(split("-")[0]) | map(tonumber)) | last // empty')
+
+          if [ -z "${LATEST_TAG}" ]; then
+            echo "No tag starting with 3006 found."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Latest 3006* tag: ${LATEST_TAG}"
+
+          LAST_BUILT_TAG=""
+          if [ -f .last_built_tag ]; then
+            LAST_BUILT_TAG=$(cat .last_built_tag)
+          fi
+
+          if [ "${LATEST_TAG}" = "${LAST_BUILT_TAG}" ]; then
+            echo "Tag ${LATEST_TAG} has already been built. Skipping."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "New tag detected: ${LATEST_TAG}"
+            echo "tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: check-tag
+    if: needs.check-tag.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Maximize build space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghcli
+          sudo apt-get clean
+          df -h
+
+      - name: Install build dependencies
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            lib32ncurses-dev dos2unix libtool-bin cmake libproxy-dev \
+            uuid-dev liblzo2-dev autoconf automake bash bison bzip2 diffutils \
+            file flex m4 g++ gawk groff-base libncurses5-dev libtool libslang2 \
+            make patch perl pkg-config shtool subversion tar texinfo zlib1g \
+            zlib1g-dev git gettext libexpat1-dev libssl-dev cvs gperf unzip \
+            python3 libxml-parser-perl gcc-multilib libxml2-dev g++-multilib \
+            libncurses5 mtd-utils libvorbis-dev xutils-dev autogen sed \
+            build-essential intltool libglib2.0-dev autopoint autoconf-archive \
+            lib32z1-dev lib32stdc++6 xsltproc gtk-doc-tools libelf-dev:i386 \
+            libelf1:i386 libltdl-dev curl nano lzip patchelf \
+            automake bc rsync sudo xxd execstack gdisk gengetopt
+
+      - name: Clone toolchains
+        run: |
+          git clone --depth 1 https://github.com/RMerl/am-toolchains ~/am-toolchains
+
+      - name: Setup toolchain environment
+        run: |
+          sudo ln -sf ~/am-toolchains/brcm-arm-hnd /opt/toolchains
+          # RT-BE86U (HND_ROUTER_BE_4916) requires the arm_softfp (soft-float) toolchain
+          echo "LD_LIBRARY_PATH=/opt/toolchains/crosstools-arm_softfp-gcc-10.3-linux-4.19-glibc-2.32-binutils-2.36.1/usr/lib" >> "$GITHUB_ENV"
+          echo "TOOLCHAIN_BASE=/opt/toolchains" >> "$GITHUB_ENV"
+          echo "/opt/toolchains/crosstools-aarch64-gcc-10.3-linux-4.19-glibc-2.32-binutils-2.36.1/usr/bin" >> "$GITHUB_PATH"
+          echo "/opt/toolchains/crosstools-arm_softfp-gcc-10.3-linux-4.19-glibc-2.32-binutils-2.36.1/usr/bin" >> "$GITHUB_PATH"
+
+      - name: Clone asuswrt-merlin.ng source
+        run: |
+          TAG="${{ needs.check-tag.outputs.tag }}"
+          git clone --depth 1 --branch "${TAG}" https://github.com/RMerl/asuswrt-merlin.ng.git ~/asuswrt-merlin.ng
+
+      - name: Apply xt_owner kernel config patch
+        run: |
+          cd ~/asuswrt-merlin.ng
+
+          # Find and patch kernel config files for RT-BE86U platform (96813) to enable xt_owner
+          find . -path "*/kernel/linux-*/arch/arm64/configs/*" \( -name "*96813*" -o -name "*defconfig*" \) | while read cfg; do
+            if grep -q "CONFIG_NETFILTER_XT_MATCH_OWNER" "$cfg"; then
+              sed -i 's/.*CONFIG_NETFILTER_XT_MATCH_OWNER.*/CONFIG_NETFILTER_XT_MATCH_OWNER=m/' "$cfg"
+              echo "Patched existing CONFIG_NETFILTER_XT_MATCH_OWNER in $cfg"
+            else
+              echo "CONFIG_NETFILTER_XT_MATCH_OWNER=m" >> "$cfg"
+              echo "Added CONFIG_NETFILTER_XT_MATCH_OWNER=m to $cfg"
+            fi
+          done
+
+          # Also patch any bcm_96813 related kernel config
+          find . \( -path "*bcm_96813*" -name ".config" \) -o -path "*96813*defconfig*" | while read cfg; do
+            if [ -f "$cfg" ]; then
+              if grep -q "CONFIG_NETFILTER_XT_MATCH_OWNER" "$cfg"; then
+                sed -i 's/.*CONFIG_NETFILTER_XT_MATCH_OWNER.*/CONFIG_NETFILTER_XT_MATCH_OWNER=m/' "$cfg"
+                echo "Patched existing CONFIG_NETFILTER_XT_MATCH_OWNER in $cfg"
+              else
+                echo "CONFIG_NETFILTER_XT_MATCH_OWNER=m" >> "$cfg"
+                echo "Added CONFIG_NETFILTER_XT_MATCH_OWNER=m to $cfg"
+              fi
+            fi
+          done
+
+          # Patch generic kernel configs under the router's platform
+          find . -path "*/linux/config_*" -type f | while read cfg; do
+            if grep -q "CONFIG_NETFILTER" "$cfg"; then
+              if ! grep -q "CONFIG_NETFILTER_XT_MATCH_OWNER" "$cfg"; then
+                echo "CONFIG_NETFILTER_XT_MATCH_OWNER=m" >> "$cfg"
+                echo "Added CONFIG_NETFILTER_XT_MATCH_OWNER=m to $cfg"
+              fi
+            fi
+          done
+
+      - name: Build RT-BE86U firmware
+        run: |
+          cd ~/asuswrt-merlin.ng/release/src-rt
+          make rt-be86u 2>&1 | tee ~/build.log
+
+      - name: Collect firmware artifacts
+        id: collect
+        run: |
+          TAG="${{ needs.check-tag.outputs.tag }}"
+          mkdir -p ~/firmware
+          find ~/asuswrt-merlin.ng/release/src-rt/image -type f \( -name "*.trx" -o -name "*.w" -o -name "*.pkgtb" \) \
+            -exec cp {} ~/firmware/ \; 2>/dev/null || true
+          # Also check for any firmware image files
+          find ~/asuswrt-merlin.ng/release/src-rt -maxdepth 3 -type f -name "*BE86U*" \
+            -exec cp {} ~/firmware/ \; 2>/dev/null || true
+          ls -la ~/firmware/
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RT-BE86U-firmware-${{ needs.check-tag.outputs.tag }}
+          path: ~/firmware/
+          retention-days: 30
+
+  release:
+    needs: [check-tag, build]
+    if: needs.check-tag.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download firmware artifact
+        uses: actions/download-artifact@v4.1.7
+        with:
+          name: RT-BE86U-firmware-${{ needs.check-tag.outputs.tag }}
+          path: firmware
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: RT-BE86U-${{ needs.check-tag.outputs.tag }}
+          name: RT-BE86U Firmware ${{ needs.check-tag.outputs.tag }}
+          body: |
+            RT-BE86U firmware built from asuswrt-merlin.ng tag `${{ needs.check-tag.outputs.tag }}`.
+
+            **Patches applied:**
+            - Enabled `CONFIG_NETFILTER_XT_MATCH_OWNER=m` (xt_owner kernel module)
+            - iptables 1.4.x already includes built-in owner match extension support (libxt_owner.so)
+          files: firmware/*
+          draft: false
+          prerelease: ${{ contains(needs.check-tag.outputs.tag, 'beta') }}
+
+      - name: Update last built tag
+        run: |
+          echo "${{ needs.check-tag.outputs.tag }}" > .last_built_tag
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .last_built_tag
+          git diff --cached --quiet || git commit -m "Update last built tag to ${{ needs.check-tag.outputs.tag }}"
+          git push
