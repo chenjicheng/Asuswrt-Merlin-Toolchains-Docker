@@ -63,68 +63,72 @@ jobs:
     needs: check-tag
     if: needs.check-tag.outputs.should_build == 'true'
     runs-on: ubuntu-latest
-    container:
-      image: gnuton/asuswrt-merlin-toolchains-docker:latest
-      options: --user root
     permissions: {}
+    env:
+      DOCKER_IMAGE: gnuton/asuswrt-merlin-toolchains-docker:latest
     steps:
-      - name: Setup toolchain environment
+      - name: Maximize build space
         run: |
-          # Use pre-installed toolchains from the Docker image
-          ln -sf /home/docker/am-toolchains/brcm-arm-hnd /opt/toolchains
-          # RT-BE86U (HND_ROUTER_BE_4916) requires the arm_softfp (soft-float) toolchain
-          echo "LD_LIBRARY_PATH=/opt/toolchains/crosstools-arm_softfp-gcc-10.3-linux-4.19-glibc-2.32-binutils-2.36.1/usr/lib" >> "$GITHUB_ENV"
-          echo "TOOLCHAIN_BASE=/opt/toolchains" >> "$GITHUB_ENV"
-          echo "/opt/toolchains/crosstools-aarch64-gcc-10.3-linux-4.19-glibc-2.32-binutils-2.36.1/usr/bin" >> "$GITHUB_PATH"
-          echo "/opt/toolchains/crosstools-arm_softfp-gcc-10.3-linux-4.19-glibc-2.32-binutils-2.36.1/usr/bin" >> "$GITHUB_PATH"
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghcli
+          sudo apt-get clean
+          df -h
 
       - name: Clone asuswrt-merlin.ng source
         run: |
           TAG="${{ needs.check-tag.outputs.tag }}"
           git clone --depth 1 --branch "${TAG}" https://github.com/RMerl/asuswrt-merlin.ng.git ~/asuswrt-merlin.ng
 
-      - name: Apply xt_owner kernel config patch
+      - name: Pull Docker toolchain image
+        run: docker pull "$DOCKER_IMAGE"
+
+      - name: Build RT-BE86U firmware in Docker
         run: |
-          cd ~/asuswrt-merlin.ng
+          docker run --rm \
+            -v ~/asuswrt-merlin.ng:/build \
+            -u "docker:docker" \
+            "$DOCKER_IMAGE" \
+            /bin/bash -c '
+              # Setup toolchain paths and environment variables for BCM HND AX platform
+              source ~/envs/bcm-hnd-ax-4.19be_soft.sh
 
-          # Find and patch kernel config files for RT-BE86U platform (96813) to enable xt_owner
-          find . -path "*/kernel/linux-*/arch/arm64/configs/*" \( -name "*96813*" -o -name "*defconfig*" \) | while read cfg; do
-            if grep -q "CONFIG_NETFILTER_XT_MATCH_OWNER" "$cfg"; then
-              sed -i 's/.*CONFIG_NETFILTER_XT_MATCH_OWNER.*/CONFIG_NETFILTER_XT_MATCH_OWNER=m/' "$cfg"
-              echo "Patched existing CONFIG_NETFILTER_XT_MATCH_OWNER in $cfg"
-            else
-              echo "CONFIG_NETFILTER_XT_MATCH_OWNER=m" >> "$cfg"
-              echo "Added CONFIG_NETFILTER_XT_MATCH_OWNER=m to $cfg"
-            fi
-          done
+              cd /build
 
-          # Also patch any bcm_96813 related kernel config
-          find . \( -path "*bcm_96813*" -name ".config" \) -o -path "*96813*defconfig*" | while read cfg; do
-            if [ -f "$cfg" ]; then
-              if grep -q "CONFIG_NETFILTER_XT_MATCH_OWNER" "$cfg"; then
-                sed -i 's/.*CONFIG_NETFILTER_XT_MATCH_OWNER.*/CONFIG_NETFILTER_XT_MATCH_OWNER=m/' "$cfg"
-                echo "Patched existing CONFIG_NETFILTER_XT_MATCH_OWNER in $cfg"
-              else
-                echo "CONFIG_NETFILTER_XT_MATCH_OWNER=m" >> "$cfg"
-                echo "Added CONFIG_NETFILTER_XT_MATCH_OWNER=m to $cfg"
-              fi
-            fi
-          done
+              # Patch kernel configs for RT-BE86U platform (96813) to enable xt_owner
+              find . -path "*/kernel/linux-*/arch/arm64/configs/*" \( -name "*96813*" -o -name "*defconfig*" \) | while read cfg; do
+                if grep -q "CONFIG_NETFILTER_XT_MATCH_OWNER" "$cfg"; then
+                  sed -i "s/.*CONFIG_NETFILTER_XT_MATCH_OWNER.*/CONFIG_NETFILTER_XT_MATCH_OWNER=m/" "$cfg"
+                  echo "Patched existing CONFIG_NETFILTER_XT_MATCH_OWNER in $cfg"
+                else
+                  echo "CONFIG_NETFILTER_XT_MATCH_OWNER=m" >> "$cfg"
+                  echo "Added CONFIG_NETFILTER_XT_MATCH_OWNER=m to $cfg"
+                fi
+              done
 
-          # Patch generic kernel configs under the router's platform
-          find . -path "*/linux/config_*" -type f | while read cfg; do
-            if grep -q "CONFIG_NETFILTER" "$cfg"; then
-              if ! grep -q "CONFIG_NETFILTER_XT_MATCH_OWNER" "$cfg"; then
-                echo "CONFIG_NETFILTER_XT_MATCH_OWNER=m" >> "$cfg"
-                echo "Added CONFIG_NETFILTER_XT_MATCH_OWNER=m to $cfg"
-              fi
-            fi
-          done
+              find . \( -path "*bcm_96813*" -name ".config" \) -o -path "*96813*defconfig*" | while read cfg; do
+                if [ -f "$cfg" ]; then
+                  if grep -q "CONFIG_NETFILTER_XT_MATCH_OWNER" "$cfg"; then
+                    sed -i "s/.*CONFIG_NETFILTER_XT_MATCH_OWNER.*/CONFIG_NETFILTER_XT_MATCH_OWNER=m/" "$cfg"
+                    echo "Patched existing CONFIG_NETFILTER_XT_MATCH_OWNER in $cfg"
+                  else
+                    echo "CONFIG_NETFILTER_XT_MATCH_OWNER=m" >> "$cfg"
+                    echo "Added CONFIG_NETFILTER_XT_MATCH_OWNER=m to $cfg"
+                  fi
+                fi
+              done
 
-      - name: Build RT-BE86U firmware
-        run: |
-          cd ~/asuswrt-merlin.ng/release/src-rt
-          make rt-be86u 2>&1 | tee ~/build.log
+              find . -path "*/linux/config_*" -type f | while read cfg; do
+                if grep -q "CONFIG_NETFILTER" "$cfg"; then
+                  if ! grep -q "CONFIG_NETFILTER_XT_MATCH_OWNER" "$cfg"; then
+                    echo "CONFIG_NETFILTER_XT_MATCH_OWNER=m" >> "$cfg"
+                    echo "Added CONFIG_NETFILTER_XT_MATCH_OWNER=m to $cfg"
+                  fi
+                fi
+              done
+
+              # Build firmware
+              cd /build/release/src-rt
+              make rt-be86u 2>&1 | tee /build/build.log
+            '
 
       - name: Collect firmware artifacts
         id: collect
@@ -133,7 +137,6 @@ jobs:
           mkdir -p ~/firmware
           find ~/asuswrt-merlin.ng/release/src-rt/image -type f \( -name "*.trx" -o -name "*.w" -o -name "*.pkgtb" \) \
             -exec cp {} ~/firmware/ \; 2>/dev/null || true
-          # Also check for any firmware image files
           find ~/asuswrt-merlin.ng/release/src-rt -maxdepth 3 -type f -name "*BE86U*" \
             -exec cp {} ~/firmware/ \; 2>/dev/null || true
           ls -la ~/firmware/
