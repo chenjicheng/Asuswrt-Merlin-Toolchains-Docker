@@ -95,10 +95,11 @@ jobs:
       - name: Setup toolchain environment
         run: |
           sudo ln -sf ~/am-toolchains/brcm-arm-hnd /opt/toolchains
-          echo "LD_LIBRARY_PATH=/opt/toolchains/crosstools-arm-gcc-10.3-linux-4.19-glibc-2.32-binutils-2.36.1/usr/lib" >> "$GITHUB_ENV"
+          # RT-BE86U (HND_ROUTER_BE_4916) requires the arm_softfp (soft-float) toolchain
+          echo "LD_LIBRARY_PATH=/opt/toolchains/crosstools-arm_softfp-gcc-10.3-linux-4.19-glibc-2.32-binutils-2.36.1/usr/lib" >> "$GITHUB_ENV"
           echo "TOOLCHAIN_BASE=/opt/toolchains" >> "$GITHUB_ENV"
           echo "/opt/toolchains/crosstools-aarch64-gcc-10.3-linux-4.19-glibc-2.32-binutils-2.36.1/usr/bin" >> "$GITHUB_PATH"
-          echo "/opt/toolchains/crosstools-arm-gcc-10.3-linux-4.19-glibc-2.32-binutils-2.36.1/usr/bin" >> "$GITHUB_PATH"
+          echo "/opt/toolchains/crosstools-arm_softfp-gcc-10.3-linux-4.19-glibc-2.32-binutils-2.36.1/usr/bin" >> "$GITHUB_PATH"
 
       - name: Clone asuswrt-merlin.ng source
         run: |
