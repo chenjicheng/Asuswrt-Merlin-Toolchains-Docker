@@ -13,6 +13,8 @@ on:
 jobs:
   check-tag:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       tag: ${{ steps.resolve.outputs.tag }}
       should_build: ${{ steps.resolve.outputs.should_build }}
@@ -61,6 +63,7 @@ jobs:
     needs: check-tag
     if: needs.check-tag.outputs.should_build == 'true'
     runs-on: ubuntu-latest
+    permissions: {}
     steps:
       - name: Maximize build space
         run: |
