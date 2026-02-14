@@ -63,24 +63,13 @@ jobs:
     needs: check-tag
     if: needs.check-tag.outputs.should_build == 'true'
     runs-on: ubuntu-latest
-    container:
-      image: gnuton/asuswrt-merlin-toolchains-docker:latest
-      options: --user root
     permissions: {}
     steps:
-      - name: Setup toolchain environment
-        run: |
-          # Toolchains are pre-installed in the Docker image at /home/docker/am-toolchains
-          ln -sf /home/docker/am-toolchains/brcm-arm-hnd /opt/toolchains
-          # RT-BE86U uses the arm_softfp (soft-float) toolchain
-          echo "LD_LIBRARY_PATH=/opt/toolchains/crosstools-arm_softfp-gcc-10.3-linux-4.19-glibc-2.32-binutils-2.36.1/usr/lib" >> "$GITHUB_ENV"
-          echo "TOOLCHAIN_BASE=/opt/toolchains" >> "$GITHUB_ENV"
-          echo "/opt/toolchains/crosstools-aarch64-gcc-10.3-linux-4.19-glibc-2.32-binutils-2.36.1/usr/bin" >> "$GITHUB_PATH"
-          echo "/opt/toolchains/crosstools-arm_softfp-gcc-10.3-linux-4.19-glibc-2.32-binutils-2.36.1/usr/bin" >> "$GITHUB_PATH"
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Install missing build dependencies
-        run: |
-          apt-get update && apt-get install -y automake
+      - name: Build Docker image from Dockerfile
+        run: docker build -t asuswrt-merlin-toolchains .
 
       - name: Clone asuswrt-merlin.ng source
         run: |
@@ -137,9 +126,20 @@ jobs:
 
       - name: Build RT-BE86U firmware
         run: |
-          set -o pipefail
-          cd ~/asuswrt-merlin.ng/release/src-rt-5.04behnd.4916
-          make rt-be86u 2>&1 | tee ~/build.log
+          docker run --rm \
+            -v "$HOME/asuswrt-merlin.ng:/build/asuswrt-merlin.ng" \
+            --user root \
+            asuswrt-merlin-toolchains \
+            bash -c '
+              set -o pipefail
+              ln -sf /home/docker/am-toolchains/brcm-arm-hnd /opt/toolchains
+              export LD_LIBRARY_PATH=/opt/toolchains/crosstools-arm_softfp-gcc-10.3-linux-4.19-glibc-2.32-binutils-2.36.1/usr/lib
+              export TOOLCHAIN_BASE=/opt/toolchains
+              export PATH=$PATH:/opt/toolchains/crosstools-aarch64-gcc-10.3-linux-4.19-glibc-2.32-binutils-2.36.1/usr/bin
+              export PATH=$PATH:/opt/toolchains/crosstools-arm_softfp-gcc-10.3-linux-4.19-glibc-2.32-binutils-2.36.1/usr/bin
+              cd /build/asuswrt-merlin.ng/release/src-rt-5.04behnd.4916
+              make rt-be86u 2>&1 | tee /build/asuswrt-merlin.ng/build.log
+            '
 
       - name: Collect firmware artifacts
         id: collect
