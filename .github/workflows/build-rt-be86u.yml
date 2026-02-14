@@ -108,19 +108,19 @@ jobs:
       - name: Download and install iptables 1.8.10 source
         run: |
           cd ~/asuswrt-merlin.ng/release/src/router
+          IPTABLES_SHA256="5cc255c189356e317d070755ce9371eb63a1b783c34498fb8c30264f3cc59c9c"
 
           # Download iptables 1.8.10 source if the directory does not already exist
           if [ ! -d "iptables-1.8.10" ]; then
             echo "Downloading iptables-1.8.10 source..."
             curl -fSL "https://www.netfilter.org/projects/iptables/files/iptables-1.8.10.tar.xz" -o /tmp/iptables-1.8.10.tar.xz
+            echo "${IPTABLES_SHA256}  /tmp/iptables-1.8.10.tar.xz" | sha256sum -c -
             tar xf /tmp/iptables-1.8.10.tar.xz -C .
             rm -f /tmp/iptables-1.8.10.tar.xz
             echo "iptables-1.8.10 source installed successfully"
           else
             echo "iptables-1.8.10 directory already exists"
           fi
-
-          ls -la iptables-1.8.10/
 
       - name: Enable iptables 1.8.10 for RT-BE86U build
         run: |
