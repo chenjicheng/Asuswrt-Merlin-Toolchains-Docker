@@ -119,6 +119,18 @@ jobs:
             fi
           done
 
+      - name: Patch prebuild_checks to allow root build in CI
+        run: |
+          PREBUILD_CHECKS=~/asuswrt-merlin.ng/release/src-rt-5.04behnd.4916/build/prebuild_checks.mk
+          if [ -f "$PREBUILD_CHECKS" ]; then
+            sed -i '/Attempting to build as root/,/fi/s/exit 1/true/' "$PREBUILD_CHECKS"
+            if grep -q 'Attempting to build as root' "$PREBUILD_CHECKS" && ! grep -q 'exit 1' "$PREBUILD_CHECKS"; then
+              echo "Patched prebuild_checks.mk to allow building as root in CI"
+            else
+              echo "WARNING: prebuild_checks.mk patch may not have been applied correctly"
+            fi
+          fi
+
       - name: Build RT-BE86U firmware
         run: |
           set -o pipefail
