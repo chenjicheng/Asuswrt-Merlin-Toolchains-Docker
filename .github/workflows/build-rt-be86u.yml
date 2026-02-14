@@ -78,6 +78,10 @@ jobs:
           echo "/opt/toolchains/crosstools-aarch64-gcc-10.3-linux-4.19-glibc-2.32-binutils-2.36.1/usr/bin" >> "$GITHUB_PATH"
           echo "/opt/toolchains/crosstools-arm_softfp-gcc-10.3-linux-4.19-glibc-2.32-binutils-2.36.1/usr/bin" >> "$GITHUB_PATH"
 
+      - name: Install missing build dependencies
+        run: |
+          apt-get update && apt-get install -y automake
+
       - name: Clone asuswrt-merlin.ng source
         run: |
           TAG="${{ needs.check-tag.outputs.tag }}"
