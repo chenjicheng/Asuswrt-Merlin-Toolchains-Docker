@@ -35,7 +35,7 @@ jobs:
 
           LATEST_TAG=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/RMerl/asuswrt-merlin.ng/tags?per_page=100" \
-            | jq -r '[.[].name | select(startswith("3006"))] | sort_by(split(".") | map(split("-")[0]) | map(tonumber)) | last // empty')
+            | jq -r '[.[].name | select(startswith("3006"))] | sort_by(split(".") | map(split("-")[0] | gsub("[^0-9]"; "") | if . == "" then 0 else tonumber end)) | last // empty')
 
           if [ -z "${LATEST_TAG}" ]; then
             echo "No tag starting with 3006 found."
@@ -63,38 +63,15 @@ jobs:
     needs: check-tag
     if: needs.check-tag.outputs.should_build == 'true'
     runs-on: ubuntu-latest
+    container:
+      image: gnuton/asuswrt-merlin-toolchains-docker:latest
+      options: --user root
     permissions: {}
     steps:
-      - name: Maximize build space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghcli
-          sudo apt-get clean
-          df -h
-
-      - name: Install build dependencies
-        run: |
-          sudo dpkg --add-architecture i386
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            lib32ncurses-dev dos2unix libtool-bin cmake libproxy-dev \
-            uuid-dev liblzo2-dev autoconf automake bash bison bzip2 diffutils \
-            file flex m4 g++ gawk groff-base libncurses5-dev libtool libslang2 \
-            make patch perl pkg-config shtool subversion tar texinfo zlib1g \
-            zlib1g-dev git gettext libexpat1-dev libssl-dev cvs gperf unzip \
-            python3 libxml-parser-perl gcc-multilib libxml2-dev g++-multilib \
-            libncurses5 mtd-utils libvorbis-dev xutils-dev autogen sed \
-            build-essential intltool libglib2.0-dev autopoint autoconf-archive \
-            lib32z1-dev lib32stdc++6 xsltproc gtk-doc-tools libelf-dev:i386 \
-            libelf1:i386 libltdl-dev curl nano lzip patchelf \
-            automake bc rsync sudo xxd execstack gdisk gengetopt
-
-      - name: Clone toolchains
-        run: |
-          git clone --depth 1 https://github.com/RMerl/am-toolchains ~/am-toolchains
-
       - name: Setup toolchain environment
         run: |
-          sudo ln -sf ~/am-toolchains/brcm-arm-hnd /opt/toolchains
+          # Use pre-installed toolchains from the Docker image
+          ln -sf /home/docker/am-toolchains/brcm-arm-hnd /opt/toolchains
           # RT-BE86U (HND_ROUTER_BE_4916) requires the arm_softfp (soft-float) toolchain
           echo "LD_LIBRARY_PATH=/opt/toolchains/crosstools-arm_softfp-gcc-10.3-linux-4.19-glibc-2.32-binutils-2.36.1/usr/lib" >> "$GITHUB_ENV"
           echo "TOOLCHAIN_BASE=/opt/toolchains" >> "$GITHUB_ENV"
